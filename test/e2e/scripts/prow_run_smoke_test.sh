@@ -39,7 +39,7 @@
 #                           Example: quay.io/opendatahub/maas-controller:pr-430
 #   INSECURE_HTTP  - Deploy without TLS and use HTTP for tests (default: false)
 #                    Affects deploy.sh (via --disable-tls-backend) and test env
-#   CONTROLLER_NAMESPACE - Namespace of MaaS Controller (default: opendatahub)
+#   DEPLOYMENT_NAMESPACE - Namespace of MaaS API and Controller (default: opendatahub)
 #   MAAS_SYSTEM_NAMESPACE - Namespace of MaaS CRs (default: models-as-a-service)
 # =============================================================================
 
@@ -73,7 +73,7 @@ export MAAS_CONTROLLER_IMAGE=${MAAS_CONTROLLER_IMAGE:-}
 export OPERATOR_CATALOG=${OPERATOR_CATALOG:-}
 export OPERATOR_IMAGE=${OPERATOR_IMAGE:-}
 AUTHORINO_NAMESPACE="kuadrant-system"
-CONTROLLER_NAMESPACE="${CONTROLLER_NAMESPACE:-opendatahub}"
+DEPLOYMENT_NAMESPACE="${DEPLOYMENT_NAMESPACE:-opendatahub}"
 MAAS_SYSTEM_NAMESPACE="${MAAS_SYSTEM_NAMESPACE:-models-as-a-service}"
 
 # Artifact collection: OpenShift CI provides ARTIFACT_DIR (docs.ci.openshift.org/docs/architecture/step-registry).
@@ -215,7 +215,7 @@ deploy_models() {
 
     # Deploy all at once so dependencies resolve correctly
     # Sample kustomizations hardcode namespace: models-as-a-service; override to $MAAS_SYSTEM_NAMESPACE
-    # so CRs land in the correct namespace (CI sets NAMESPACE to a dynamic value).
+    # so CRs land in the correct namespace.
     if ! (cd "$PROJECT_ROOT" && kustomize build docs/samples/maas-system/ | \
             sed "s/namespace: models-as-a-service/namespace: $MAAS_SYSTEM_NAMESPACE/g" | \
             kubectl apply -f -); then
@@ -250,8 +250,8 @@ deploy_models() {
                 all_ready=false
                 break
             fi
-        done < <(oc get maasmodelrefs -n "$CONTROLLER_NAMESPACE" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null)
-        if $all_ready && [[ -n "$(oc get maasmodelrefs -n "$CONTROLLER_NAMESPACE" -o name 2>/dev/null)" ]]; then
+        done < <(oc get maasmodelrefs -n "$DEPLOYMENT_NAMESPACE" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null)
+        if $all_ready && [[ -n "$(oc get maasmodelrefs -n "$DEPLOYMENT_NAMESPACE" -o name 2>/dev/null)" ]]; then
             break
         fi
         retries=$((retries + 1))
@@ -262,8 +262,8 @@ deploy_models() {
         # TODO: Remove this workaround once maas-controller reconcile logic is correct.
         # Controller can get stuck in a bad state forever; bouncing may unstick it.
         echo "  MaaSModelRefs not ready after ${retries} retries, bouncing maas-controller..."
-        kubectl rollout restart deployment/maas-controller -n "$CONTROLLER_NAMESPACE" 2>/dev/null || true
-        kubectl rollout status deployment/maas-controller -n "$CONTROLLER_NAMESPACE" --timeout=120s 2>/dev/null || true
+        kubectl rollout restart deployment/maas-controller -n "$DEPLOYMENT_NAMESPACE" 2>/dev/null || true
+        kubectl rollout status deployment/maas-controller -n "$DEPLOYMENT_NAMESPACE" --timeout=120s 2>/dev/null || true
         echo "  Retrying MaaSModelRefs wait..."
         retries=0
         while [[ $retries -lt 30 ]]; do
@@ -273,8 +273,8 @@ deploy_models() {
                     all_ready=false
                     break
                 fi
-            done < <(oc get maasmodelrefs -n "$CONTROLLER_NAMESPACE" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null)
-            if $all_ready && [[ -n "$(oc get maasmodelrefs -n "$CONTROLLER_NAMESPACE" -o name 2>/dev/null)" ]]; then
+            done < <(oc get maasmodelrefs -n "$DEPLOYMENT_NAMESPACE" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null)
+            if $all_ready && [[ -n "$(oc get maasmodelrefs -n "$DEPLOYMENT_NAMESPACE" -o name 2>/dev/null)" ]]; then
                 break
             fi
             retries=$((retries + 1))
@@ -327,13 +327,13 @@ wait_for_auth_policies_enforced() {
 
 validate_deployment() {
     echo "Deployment Validation"
-    echo "Using namespace: $CONTROLLER_NAMESPACE"
+    echo "Using namespace: $DEPLOYMENT_NAMESPACE"
     
     if [ "$SKIP_VALIDATION" = false ]; then
-        if ! "$PROJECT_ROOT/scripts/validate-deployment.sh" --namespace "$CONTROLLER_NAMESPACE"; then
+        if ! "$PROJECT_ROOT/scripts/validate-deployment.sh" --namespace "$DEPLOYMENT_NAMESPACE"; then
             echo "⚠️  First validation attempt failed, waiting 30 seconds and retrying..."
             sleep 30
-            if ! "$PROJECT_ROOT/scripts/validate-deployment.sh" --namespace "$CONTROLLER_NAMESPACE"; then
+            if ! "$PROJECT_ROOT/scripts/validate-deployment.sh" --namespace "$DEPLOYMENT_NAMESPACE"; then
                 echo "❌ ERROR: Deployment validation failed after retry"
                 exit 1
             fi
@@ -597,12 +597,12 @@ setup_test_tokens() {
 # Main execution
 # On exit (success or failure): collect artifacts (authorino-debug.log, cluster state, pod logs) and auth report
 _run_exit_artifacts() {
-    MAAS_NAMESPACE="$CONTROLLER_NAMESPACE" AUTHORINO_NAMESPACE="$AUTHORINO_NAMESPACE" ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+    DEPLOYMENT_NAMESPACE="$DEPLOYMENT_NAMESPACE" MAAS_SYSTEM_NAMESPACE="$MAAS_SYSTEM_NAMESPACE" AUTHORINO_NAMESPACE="$AUTHORINO_NAMESPACE" ARTIFACTS_DIR="$ARTIFACTS_DIR" \
         collect_e2e_artifacts
     echo ""
     echo "========== Auth Debug Report =========="
     mkdir -p "$ARTIFACTS_DIR"
-    MAAS_NAMESPACE="$CONTROLLER_NAMESPACE" AUTHORINO_NAMESPACE="$AUTHORINO_NAMESPACE" \
+    DEPLOYMENT_NAMESPACE="$DEPLOYMENT_NAMESPACE" MAAS_SYSTEM_NAMESPACE="$MAAS_SYSTEM_NAMESPACE" AUTHORINO_NAMESPACE="$AUTHORINO_NAMESPACE" \
         run_auth_debug_report 2>&1 | tee "$ARTIFACTS_DIR/auth-debug.log" || true
     echo "======================================"
 }

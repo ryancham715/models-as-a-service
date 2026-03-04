@@ -736,8 +736,7 @@ class TestMaaSSystemNamespace:
                     "modelRefs": [{"name": MODEL_REF, "tokenRateLimits": [{"limit": 1, "window": "1m"}]}],
                 },
             })
-            _wait_reconcile()
-            _wait_reconcile()
+            _wait_reconcile(30)
 
             auth_name = f"maas-auth-{MODEL_REF}"
             auth_annotations = _get_cr_annotations("authpolicy", auth_name, "llm")
@@ -745,7 +744,7 @@ class TestMaaSSystemNamespace:
                 f"AuthPolicy {auth_name} not found"
             )
             assert "e2e-watched-auth" in auth_annotations.get("maas.opendatahub.io/auth-policies", "").split(","), (
-                f"MaaSAuthPolicy e2e-watched-auth not reconciled"
+                "MaaSAuthPolicy e2e-watched-auth not reconciled"
             )
 
             trlp_name = f"maas-trlp-{MODEL_REF}"
@@ -754,7 +753,7 @@ class TestMaaSSystemNamespace:
                 f"TRLP {trlp_name} not found"
             )
             assert "e2e-watched-sub" in trlp_annotations.get("maas.opendatahub.io/subscriptions", "").split(","), (
-                f"MaaSSubscription e2e-watched-sub not reconciled"
+                "MaaSSubscription e2e-watched-sub not reconciled"
             )
         finally:
             _delete_cr("maasauthpolicy", "e2e-watched-auth")
@@ -790,8 +789,7 @@ class TestMaaSSystemNamespace:
                     "modelRefs": [{"name": MODEL_REF, "tokenRateLimits": [{"limit": 1, "window": "1m"}]}],
                 },
             })
-            _wait_reconcile()
-            _wait_reconcile()
+            _wait_reconcile(30)
 
             auth_name = f"maas-auth-{MODEL_REF}"
             auth_annotations = _get_cr_annotations("authpolicy", auth_name, "llm")
@@ -799,7 +797,7 @@ class TestMaaSSystemNamespace:
                 f"AuthPolicy {auth_name} not found"
             )
             assert "e2e-unwatched-auth" not in auth_annotations.get("maas.opendatahub.io/auth-policies", "").split(","), (
-                f"MaaSAuthPolicy e2e-unwatched-auth reconciled"
+                "MaaSAuthPolicy e2e-unwatched-auth reconciled"
             )
 
             trlp_name = f"maas-trlp-{MODEL_REF}"
@@ -808,7 +806,7 @@ class TestMaaSSystemNamespace:
                 f"TRLP {trlp_name} not found"
             )
             assert "e2e-unwatched-sub" not in trlp_annotations.get("maas.opendatahub.io/subscriptions", "").split(","), (
-                f"MaaSSubscription e2e-unwatched-sub reconciled"
+                "MaaSSubscription e2e-unwatched-sub reconciled"
             )
         finally:
             _delete_cr("maasauthpolicy", "e2e-unwatched-auth", namespace=ns)
