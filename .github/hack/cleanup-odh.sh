@@ -8,6 +8,7 @@
 # - Custom CatalogSource (odh-custom-catalog)
 # - ODH operator namespace (odh-operator)
 # - OpenDataHub application namespace (opendatahub)
+# - MaaS system namespace (models-as-a-service)
 # - ODH CRDs (optional)
 #
 # Usage: ./cleanup-odh.sh [--include-crds]
@@ -84,17 +85,9 @@ kubectl delete ns opendatahub --ignore-not-found --timeout=120s 2>/dev/null || t
 if kubectl get namespace opendatahub &>/dev/null; then
     echo "   opendatahub stuck terminating, removing finalizers..."
     # Remove finalizers from MaaS CRs (common blockers)
-    for name in $(kubectl get maasauthpolicies.maas.opendatahub.io -n opendatahub --no-headers 2>/dev/null | awk '{print $1}'); do
-        echo "   Removing finalizers from MaaSAuthPolicy $name..."
-        kubectl patch maasauthpolicies.maas.opendatahub.io "$name" -n opendatahub --type=json -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
-    done
     for name in $(kubectl get maasmodels.maas.opendatahub.io -n opendatahub --no-headers 2>/dev/null | awk '{print $1}'); do
         echo "   Removing finalizers from MaaSModel $name..."
         kubectl patch maasmodels.maas.opendatahub.io "$name" -n opendatahub --type=json -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
-    done
-    for name in $(kubectl get maassubscriptions.maas.opendatahub.io -n opendatahub --no-headers 2>/dev/null | awk '{print $1}'); do
-        echo "   Removing finalizers from MaaSSubscription $name..."
-        kubectl patch maassubscriptions.maas.opendatahub.io "$name" -n opendatahub --type=json -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
     done
     # Remove finalizers from namespace itself (requires jq)
     if kubectl get namespace opendatahub &>/dev/null && command -v jq &>/dev/null; then
@@ -114,9 +107,43 @@ if kubectl get namespace opendatahub &>/dev/null; then
     done
 fi
 
-# 9. Delete policy engine namespaces (Kuadrant or RHCL)
+# 9. Delete models-as-a-service namespace (contains MaaS CRs)
+echo "9. Deleting models-as-a-service namespace..."
+kubectl delete ns models-as-a-service --ignore-not-found --timeout=120s 2>/dev/null || true
+
+# 9b. Force-remove models-as-a-service if stuck terminating (MaaS CRs often have finalizers)
+if kubectl get namespace models-as-a-service &>/dev/null; then
+    echo "   models-as-a-service stuck terminating, removing finalizers..."
+    # Remove finalizers from MaaS CRs (common blockers)
+    for name in $(kubectl get maasauthpolicies.maas.opendatahub.io -n models-as-a-service --no-headers 2>/dev/null | awk '{print $1}'); do
+        echo "   Removing finalizers from MaaSAuthPolicy $name..."
+        kubectl patch maasauthpolicies.maas.opendatahub.io "$name" -n models-as-a-service --type=json -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
+    done
+    for name in $(kubectl get maassubscriptions.maas.opendatahub.io -n models-as-a-service --no-headers 2>/dev/null | awk '{print $1}'); do
+        echo "   Removing finalizers from MaaSSubscription $name..."
+        kubectl patch maassubscriptions.maas.opendatahub.io "$name" -n models-as-a-service --type=json -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
+    done
+    # Remove finalizers from namespace itself (requires jq)
+    if kubectl get namespace models-as-a-service &>/dev/null && command -v jq &>/dev/null; then
+        echo "   Removing finalizers from models-as-a-service namespace..."
+        kubectl get namespace models-as-a-service -o json | jq '.spec.finalizers = []' | \
+            kubectl replace --raw "/api/v1/namespaces/models-as-a-service/finalize" -f -
+    elif kubectl get namespace models-as-a-service &>/dev/null; then
+        echo "   WARNING: Install 'jq' to force-remove namespace finalizers. Namespace may remain terminating."
+    fi
+    echo "   Waiting for models-as-a-service namespace to be removed..."
+    for i in {1..30}; do
+        if ! kubectl get namespace models-as-a-service &>/dev/null; then
+            echo "   models-as-a-service namespace removed."
+            break
+        fi
+        sleep 2
+    done
+fi
+
+# 10. Delete policy engine namespaces (Kuadrant or RHCL)
 for policy_ns in kuadrant-system rh-connectivity-link; do
-  echo "9. Deleting $policy_ns namespace (if installed)..."
+  echo "10. Deleting $policy_ns namespace (if installed)..."
   kubectl delete ns "$policy_ns" --ignore-not-found --timeout=60s 2>/dev/null || true
 
   # Force-remove if stuck terminating
@@ -142,8 +169,8 @@ for policy_ns in kuadrant-system rh-connectivity-link; do
   fi
 done
 
-# 10. Delete llm namespace and model resources
-echo "10. Deleting LLM models and namespace..."
+# 11. Delete llm namespace and model resources
+echo "11. Deleting LLM models and namespace..."
 if kubectl get ns llm &>/dev/null; then
     # Delete LLMInferenceService resources first (they have finalizers)
     echo "   Deleting LLMInferenceService resources..."
@@ -172,8 +199,8 @@ else
     echo "   llm namespace not found, skipping"
 fi
 
-# 11. Delete gateway resources in openshift-ingress
-echo "11. Deleting gateway resources..."
+# 12. Delete gateway resources in openshift-ingress
+echo "12. Deleting gateway resources..."
 kubectl delete gateway maas-default-gateway -n openshift-ingress --ignore-not-found 2>/dev/null || true
 kubectl delete envoyfilter -n openshift-ingress -l kuadrant.io/managed=true --ignore-not-found 2>/dev/null || true
 kubectl delete envoyfilter kuadrant-auth-tls-fix -n openshift-ingress --ignore-not-found 2>/dev/null || true
@@ -181,20 +208,20 @@ kubectl delete authpolicy -n openshift-ingress --all --ignore-not-found 2>/dev/n
 kubectl delete ratelimitpolicy -n openshift-ingress --all --ignore-not-found 2>/dev/null || true
 kubectl delete tokenratelimitpolicy -n openshift-ingress --all --ignore-not-found 2>/dev/null || true
 
-# 12. Delete MaaS RBAC (ClusterRoles, ClusterRoleBindings - can conflict with other managers)
-echo "12. Deleting MaaS RBAC..."
+# 13. Delete MaaS RBAC (ClusterRoles, ClusterRoleBindings - can conflict with other managers)
+echo "13. Deleting MaaS RBAC..."
 kubectl delete clusterrolebinding maas-api maas-controller-rolebinding --ignore-not-found 2>/dev/null || true
 kubectl delete clusterrole maas-api maas-controller-role --ignore-not-found 2>/dev/null || true
 
-# 13. Optionally delete CRDs
+# 14. Optionally delete CRDs
 if $INCLUDE_CRDS; then
-    echo "13. Deleting ODH CRDs..."
+    echo "14. Deleting ODH CRDs..."
     kubectl delete crd datascienceclusters.datasciencecluster.opendatahub.io --ignore-not-found 2>/dev/null || true
     kubectl delete crd dscinitializations.dscinitialization.opendatahub.io --ignore-not-found 2>/dev/null || true
     kubectl delete crd datasciencepipelinesapplications.datasciencepipelinesapplications.opendatahub.io --ignore-not-found 2>/dev/null || true
     # Add more CRDs as needed
 else
-    echo "13. Skipping CRD deletion (use --include-crds to remove CRDs)"
+    echo "14. Skipping CRD deletion (use --include-crds to remove CRDs)"
 fi
 
 echo ""
@@ -203,4 +230,4 @@ echo ""
 echo "Verify cleanup with:"
 echo "  kubectl get subscription -A | grep -i odh"
 echo "  kubectl get csv -A | grep -i odh"
-echo "  kubectl get ns | grep -E 'odh|opendatahub|kuadrant|rh-connectivity-link|llm'"
+echo "  kubectl get ns | grep -E 'odh|opendatahub|models-as-a-service|kuadrant|rh-connectivity-link|llm'"

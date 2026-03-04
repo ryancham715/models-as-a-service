@@ -13,10 +13,11 @@
 #   collect_e2e_artifacts
 #
 # Or run the full auth debug report:
-#   MAAS_NAMESPACE=opendatahub ./test/e2e/scripts/auth_utils.sh
+#   ./test/e2e/scripts/auth_utils.sh
 #
 # Environment:
-#   MAAS_NAMESPACE     - Namespace where maas-api/maas-controller run (default: opendatahub)
+#   DEPLOYMENT_NAMESPACE - Namespace of MaaS API and Controller (default: opendatahub)
+#   MAAS_SYSTEM_NAMESPACE - Namespace of MaaS CRs (default: models-as-a-service)
 #   AUTHORINO_NAMESPACE - Namespace for Authorino (default: kuadrant-system)
 #   ARTIFACT_DIR       - Prow artifact dir; also ARTIFACTS, LOG_DIR (default: test/e2e/reports)
 #
@@ -34,7 +35,8 @@ _find_root() {
 }
 
 PROJECT_ROOT="$(_find_root)"
-MAAS_NAMESPACE="${MAAS_NAMESPACE:-opendatahub}"
+DEPLOYMENT_NAMESPACE="${DEPLOYMENT_NAMESPACE:-opendatahub}"
+MAAS_SYSTEM_NAMESPACE="${MAAS_SYSTEM_NAMESPACE:-models-as-a-service}"
 AUTHORINO_NAMESPACE="${AUTHORINO_NAMESPACE:-kuadrant-system}"
 # OpenShift CI/Prow use ARTIFACT_DIR; respect ARTIFACTS_DIR if already set by caller
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ARTIFACT_DIR:-${ARTIFACTS:-${LOG_DIR:-$PROJECT_ROOT/test/e2e/reports}}}}"
