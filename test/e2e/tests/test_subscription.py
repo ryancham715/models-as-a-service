@@ -257,104 +257,141 @@ def _cr_exists(kind, name, namespace=None):
     return result.returncode == 0
 
 
-def _get_auth_policies_for_model(model_ref):
-    """Get all MaaSAuthPolicy CRs that reference the given model."""
-    namespace = _ns()
-    result = subprocess.run(
-        ["oc", "get", "maasauthpolicy", "-n", namespace, "-o", "json"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        return []
-    policies = json.loads(result.stdout).get("items", [])
-    # Filter policies that reference this model
-    # MaaSAuthPolicy.spec.modelRefs is a list of strings
-    return [
-        p["metadata"]["name"]
-        for p in policies
-        if model_ref in p.get("spec", {}).get("modelRefs", [])
-    ]
+def _get_auth_policies_for_model(model_ref, namespace=None):
+    """Get all MaaSAuthPolicies that reference a model.
+
+    Args:
+        model_ref: Name of the MaaSModelRef
+        namespace: Namespace to search (defaults to _ns())
+
+    Returns:
+        List of auth policy names that reference the model
+    """
+    namespace = namespace or _ns()
+    policies = _list_crs("maasauthpolicy", namespace)
+
+    matching = []
+    for policy in policies:
+        model_refs = policy.get("spec", {}).get("modelRefs", [])
+        if model_ref in model_refs:
+            matching.append(policy["metadata"]["name"])
+    return matching
 
 
-def _get_subscriptions_for_model(model_ref):
-    """Get all MaaSSubscription CRs that reference the given model."""
-    namespace = _ns()
-    result = subprocess.run(
-        ["oc", "get", "maassubscription", "-n", namespace, "-o", "json"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        return []
-    subscriptions = json.loads(result.stdout).get("items", [])
-    # Filter subscriptions that reference this model
-    # MaaSSubscription.spec.modelRefs is a list of objects with 'name' field
-    return [
-        s["metadata"]["name"]
-        for s in subscriptions
-        if model_ref in [ref.get("name", "") for ref in s.get("spec", {}).get("modelRefs", [])]
-    ]
+def _get_subscriptions_for_model(model_ref, namespace=None):
+    """Get all MaaSSubscriptions that reference a model.
+
+    Args:
+        model_ref: Name of the MaaSModelRef
+        namespace: Namespace to search (defaults to _ns())
+
+    Returns:
+        List of subscription names that reference the model
+    """
+    namespace = namespace or _ns()
+    subs = _list_crs("maassubscription", namespace)
+
+    matching = []
+    for sub in subs:
+        model_refs = sub.get("spec", {}).get("modelRefs", [])
+        for ref in model_refs:
+            # Handle both string refs and dict refs with 'name' field
+            ref_name = ref.get("name") if isinstance(ref, dict) else ref
+            if ref_name == model_ref:
+                matching.append(sub["metadata"]["name"])
+                break
+    return matching
 
 
-def _sa_to_user(sa_name, namespace):
-    """Convert service account name to full user principal."""
+def _sa_to_user(sa_name, namespace=None):
+    """Convert service account name to Kubernetes user principal."""
+    namespace = namespace or _ns()
     return f"system:serviceaccount:{namespace}:{sa_name}"
 
 
-def _create_test_maas_model(model_ref):
-    """Create a test MaaSModelRef CR."""
+def _create_test_maas_model(name, llmis_name="facebook-opt-125m-simulated", llmis_namespace="llm", namespace=None):
+    """Create a MaaSModelRef CR for testing."""
+    namespace = namespace or os.environ.get("DEPLOYMENT_NAMESPACE", "opendatahub")
+    log.info("Creating MaaSModelRef: %s", name)
     _apply_cr({
         "apiVersion": "maas.opendatahub.io/v1alpha1",
         "kind": "MaaSModelRef",
-        "metadata": {"name": model_ref, "namespace": "opendatahub"},
+        "metadata": {"name": name, "namespace": namespace},
         "spec": {
             "modelRef": {
                 "kind": "LLMInferenceService",
-                "name": model_ref,
-                "namespace": "llm"
+                "name": llmis_name,
+                "namespace": llmis_namespace
             }
         }
     })
 
 
-def _create_test_auth_policy(name, model_ref, users=None, groups=None):
-    """Create a test MaaSAuthPolicy CR."""
-    ns = _ns()
-    subjects = {}
-    if users:
-        subjects["users"] = users
-    if groups:
-        subjects["groups"] = [{"name": g} for g in groups]
+def _create_test_auth_policy(name, model_refs, users=None, groups=None, namespace=None):
+    """Create a MaaSAuthPolicy CR for testing.
 
+    Args:
+        name: Name of the auth policy
+        model_refs: Model ref(s) - can be string or list
+        users: List of user principals (e.g., ["system:serviceaccount:ns:sa"])
+        groups: List of group names (e.g., ["system:authenticated"]) - will be converted to required format
+        namespace: Namespace for the auth policy (defaults to _ns())
+    """
+    namespace = namespace or _ns()
+    if not isinstance(model_refs, list):
+        model_refs = [model_refs]
+
+    # Convert groups list to required format: [{"name": "group1"}, {"name": "group2"}]
+    groups_formatted = [{"name": g} for g in (groups or [])]
+
+    log.info("Creating MaaSAuthPolicy: %s", name)
     _apply_cr({
         "apiVersion": "maas.opendatahub.io/v1alpha1",
         "kind": "MaaSAuthPolicy",
-        "metadata": {"name": name, "namespace": ns},
+        "metadata": {"name": name, "namespace": namespace},
         "spec": {
-            "modelRefs": [model_ref],
-            "subjects": subjects
+            "modelRefs": model_refs,
+            "subjects": {
+                "users": users or [],
+                "groups": groups_formatted
+            }
         }
     })
 
 
-def _create_test_subscription(name, model_ref, users=None, groups=None, token_limit=100):
-    """Create a test MaaSSubscription CR."""
-    ns = _ns()
-    owner = {}
-    if users:
-        owner["users"] = users
-    if groups:
-        owner["groups"] = [{"name": g} for g in groups]
+def _create_test_subscription(name, model_refs, users=None, groups=None, token_limit=100, window="1m", namespace=None):
+    """Create a MaaSSubscription CR for testing.
 
+    Args:
+        name: Name of the subscription
+        model_refs: Model ref(s) - can be string or list
+        users: List of user principals (e.g., ["system:serviceaccount:ns:sa"])
+        groups: List of group names (e.g., ["system:authenticated"]) - will be converted to required format
+        token_limit: Token rate limit (default: 100)
+        window: Rate limit window (default: "1m")
+        namespace: Namespace for the subscription (defaults to _ns())
+    """
+    namespace = namespace or _ns()
+    if not isinstance(model_refs, list):
+        model_refs = [model_refs]
+
+    # Convert groups list to required format: [{"name": "group1"}, {"name": "group2"}]
+    groups_formatted = [{"name": g} for g in (groups or [])]
+
+    log.info("Creating MaaSSubscription: %s", name)
     _apply_cr({
         "apiVersion": "maas.opendatahub.io/v1alpha1",
         "kind": "MaaSSubscription",
-        "metadata": {"name": name, "namespace": ns},
+        "metadata": {"name": name, "namespace": namespace},
         "spec": {
-            "owner": owner,
+            "owner": {
+                "users": users or [],
+                "groups": groups_formatted
+            },
             "modelRefs": [{
-                "name": model_ref,
-                "tokenRateLimits": [{"limit": token_limit, "window": "1m"}]
-            }]
+                "name": ref,
+                "tokenRateLimits": [{"limit": token_limit, "window": window}]
+            } for ref in model_refs]
         }
     })
 
@@ -407,20 +444,41 @@ def _wait_reconcile(seconds=None):
     time.sleep(seconds or RECONCILE_WAIT)
 
 
-def _wait_for_maas_model_ready(model_ref, timeout=120):
-    """Wait for MaaSModelRef to become Ready and return its endpoint."""
-    deployment_ns = os.environ.get("DEPLOYMENT_NAMESPACE", "opendatahub")
+def _wait_for_maas_model_ready(name, namespace=None, timeout=120):
+    """Wait for MaaSModelRef to reach Ready phase.
+
+    Args:
+        name: Name of the MaaSModelRef
+        namespace: Namespace (defaults to DEPLOYMENT_NAMESPACE or opendatahub)
+        timeout: Maximum wait time in seconds (default: 120)
+
+    Returns:
+        str: The model endpoint URL
+
+    Raises:
+        TimeoutError: If MaaSModelRef doesn't become Ready within timeout
+    """
+    namespace = namespace or os.environ.get("DEPLOYMENT_NAMESPACE", "opendatahub")
     deadline = time.time() + timeout
+    log.info(f"Waiting for MaaSModelRef {name} to become Ready (timeout: {timeout}s)...")
+
     while time.time() < deadline:
-        model = _get_cr("maasmodelref", model_ref, deployment_ns)
-        if model:
-            phase = model.get("status", {}).get("phase")
-            endpoint = model.get("status", {}).get("endpoint")
+        cr = _get_cr("maasmodelref", name, namespace)
+        if cr:
+            phase = cr.get("status", {}).get("phase")
+            endpoint = cr.get("status", {}).get("endpoint")
             if phase == "Ready" and endpoint:
-                log.info(f"MaaSModelRef {model_ref} is Ready: {endpoint}")
+                log.info(f"✅ MaaSModelRef {name} is Ready (endpoint: {endpoint})")
                 return endpoint
+            log.debug(f"MaaSModelRef {name} phase: {phase}, endpoint: {endpoint or 'none'}")
         time.sleep(5)
-    raise TimeoutError(f"MaaSModelRef {model_ref} did not become Ready within {timeout}s")
+
+    # Timeout - log current state for debugging
+    cr = _get_cr("maasmodelref", name, namespace)
+    current_phase = cr.get("status", {}).get("phase") if cr else "not found"
+    raise TimeoutError(
+        f"MaaSModelRef {name} did not become Ready within {timeout}s (current phase: {current_phase})"
+    )
 
 
 def _poll_status(token, expected, path=None, extra_headers=None, subscription=None, timeout=None, poll_interval=2):
@@ -471,6 +529,46 @@ def _snapshot_cr(kind, name, namespace=None):
         meta.pop("annotations", None)
     cr.pop("status", None)
     return cr
+
+
+def _list_crs(kind, namespace=None):
+    """List all CRs of a given kind.
+
+    Args:
+        kind: CR kind (e.g., 'maasmodelref', 'maasauthpolicy')
+        namespace: Namespace to search (defaults to _ns())
+
+    Returns:
+        List of CR dictionaries
+
+    Raises:
+        RuntimeError: If kubectl command fails with contextual error details
+    """
+    namespace = namespace or _ns()
+    plural = {
+        "maasmodelref": "maasmodelrefs",
+        "maasauthpolicy": "maasauthpolicies",
+        "maassubscription": "maassubscriptions",
+    }.get(kind, f"{kind}s")
+
+    cmd = ["kubectl", "get", plural, "-n", namespace, "-o", "json"]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to list {plural} in namespace '{namespace}'.\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"Exit code: {result.returncode}\n"
+            f"Stderr: {result.stderr}\n"
+            f"Guidance: Ensure the CRD exists, namespace is correct, and you have permissions."
+        )
+
+    return json.loads(result.stdout).get("items", [])
 
 
 def _get_cr_annotations(kind, name, namespace="llm"):
