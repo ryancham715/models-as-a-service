@@ -336,7 +336,7 @@ def _create_test_auth_policy(name, model_ref, users=None, groups=None):
     })
 
 
-def _create_test_subscription(name, model_ref, users=None, groups=None):
+def _create_test_subscription(name, model_ref, users=None, groups=None, token_limit=100):
     """Create a test MaaSSubscription CR."""
     ns = _ns()
     owner = {}
@@ -353,7 +353,7 @@ def _create_test_subscription(name, model_ref, users=None, groups=None):
             "owner": owner,
             "modelRefs": [{
                 "name": model_ref,
-                "tokenRateLimits": [{"limit": 100, "window": "1m"}]
+                "tokenRateLimits": [{"limit": token_limit, "window": "1m"}]
             }]
         }
     })
