@@ -104,7 +104,16 @@ type LifecycleReconciler struct {
 //+kubebuilder:rbac:groups=perses.dev,resources=persesdashboards;persesdatasources,verbs=get;list;watch;create;patch;delete
 //+kubebuilder:rbac:groups=networking.istio.io,resources=envoyfilters,verbs=get;list;watch;create;patch;delete
 //+kubebuilder:rbac:groups=opentelemetry.io,resources=opentelemetrycollectors,verbs=get;list;watch;create;patch;delete
-//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;patch;delete
+// clusterroles/clusterrolebindings: this reconciler SSA-applies and orphan-cleans up the named
+// ClusterRoles/ClusterRoleBindings in the usage-logs bundle (see ensureUsageLogs/CWE-863 comment
+// below; names come from deployment/components/observability/usage-logs/*-rbac.yaml). get/patch/delete
+// are scoped by resourceNames; create cannot be restricted by resourceNames (see tenant_controller.go
+// for the same limitation), and list/watch cannot be scoped by resourceNames for a controller-runtime
+// cache watch.
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=create;list;watch
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=usage-collector-application-logs-write;usage-tenancy-proxy-pods-log-read,verbs=get;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=usage-tenancy-proxy-application-logs-read;usage-tenancy-proxy-tokenreview,verbs=get;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,resourceNames=usage-collector-application-logs-write;usage-tenancy-proxy-tokenreview,verbs=get;patch;delete
 
 func (r *LifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrl.Log.WithName("self-deployment").WithValues("deployment", req.NamespacedName)

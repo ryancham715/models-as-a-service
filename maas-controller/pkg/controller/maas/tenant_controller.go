@@ -105,25 +105,29 @@ type TenantReconciler struct {
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=podmonitors;servicemonitors,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;patch;delete
 
-// clusterroles/clusterrolebindings: TenantReconciler SSA-applies the maas-api and payload-processing-reader
-// ClusterRoles. The API-server escalation check requires the applying SA to already hold every permission those
-// ClusterRoles grant — which is why secrets get;list;watch must remain unrestricted (payload-processing-reader
-// grants unrestricted get on secrets; Kubernetes also does not support resourceNames on list/watch).
+// clusterroles/clusterrolebindings: TenantReconciler SSA-applies the maas-api, maas-api-supplemental, and
+// payload-processing-reader ClusterRoles/ClusterRoleBindings (by name — see maas-api/deploy/overlays/odh).
+// The API-server escalation check requires the applying SA to already hold every permission those ClusterRoles
+// grant — which is why secrets get;list;watch must remain unrestricted (payload-processing-reader grants
+// unrestricted get/list/watch on secrets for its own cross-namespace informer; see
+// ai-gateway-payload-processing's newFilteredSecretCache for the client-side label filter that scopes actual
+// usage — Kubernetes RBAC has no equivalent label-based restriction). get/patch/delete on clusterroles and
+// clusterrolebindings are scoped by resourceNames to the objects above; create cannot be restricted by
+// resourceNames (same limitation documented in clusterrole_maas_configs.yaml for the Config CR), and list/watch
+// cannot be scoped by resourceNames for a controller-runtime cache (no metadata.name field selector).
 // The client-side predicate secretNamedMaaSDB() filters informer events to maas-db-config only.
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=create;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=maas-api;maas-api-supplemental;payload-processing-reader,verbs=get;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=create;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,resourceNames=maas-api;maas-api-supplemental;payload-processing-reader,verbs=get;patch;delete
 
 // Escalation-check mirror for maas-api ClusterRole — maas-controller must hold every verb it grants.
-// namespaces create: bootstrap the subscription namespace at startup (ensureSubscriptionNamespaceWithClient).
-// endpoints, pods: used by controller for service discovery and health checks.
-// serviceaccounts/token create, tokenreviews, subjectaccessreviews: required by maas-api for bound SA token
-// projection and access checks. maasmodelrefs/maassubscriptions: read-only cross-reconciler references.
+// namespaces create: bootstrap the AITenant/infra namespaces at startup (ensureManagedNamespaceWithClient).
+// tokenreviews, subjectaccessreviews: required by maas-api for bound SA token projection and access checks.
+// maasmodelrefs/maassubscriptions: read-only cross-reconciler references.
 // gateways, routes: NOT included here - maas-api gets these via its own ClusterRole, not escalated from controller.
-// +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=serviceaccounts/token,verbs=create
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 // +kubebuilder:rbac:groups=maas.opendatahub.io,resources=maasmodelrefs,verbs=get;list;watch
